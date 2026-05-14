@@ -1,0 +1,38 @@
+// FileService — uploads and signed URLs. Gated on the `files` feature in the
+// project's slack_apps.enabled_features (slack.md "Outbound: SDK sends to
+// Slack", step 4). Without it, the server returns gRPC PERMISSION_DENIED
+// before ever calling Slack.
+syntax = "proto3";
+package photon.slack.v1;
+
+import "photon/slack/v1/common.proto";
+
+service FileService {
+  rpc Upload(UploadRequest) returns (UploadResponse);
+  rpc GetUrl(GetUrlRequest) returns (GetUrlResponse);
+}
+
+message UploadRequest {
+  // Slack channel id (or comma-separated list) to share into.
+  string channel = 1;
+  string filename = 2;
+  string mimetype = 3;
+  bytes content = 4;
+  optional string initial_comment = 5;
+  optional string thread_ts = 6;
+}
+
+message UploadResponse {
+  File file = 1;
+}
+
+message GetUrlRequest {
+  string file_id = 1;
+}
+
+message GetUrlResponse {
+  // Slack's `url_private`. Requires Authorization: Bearer <bot_token> on
+  // fetch — clients must proxy through spectrum-slack if they want to consume
+  // the bytes (a future GetContent RPC).
+  string url = 1;
+}
