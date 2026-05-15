@@ -10,6 +10,13 @@ import "photon/slack/v1/common.proto";
 service FileService {
   rpc Upload(UploadRequest) returns (UploadResponse);
   rpc GetUrl(GetUrlRequest) returns (GetUrlResponse);
+  // Server-streams the file's bytes through spectrum-slack so SDKs (which
+  // never hold the bot token) can consume the content. First frame is a
+  // header (mimetype/name/size/offset); subsequent frames are byte chunks.
+  // Supports byte-range resume via `GetContentRequest.offset` so an SDK can
+  // recover from a mid-stream disconnect (pod redeploy, network blip)
+  // without re-downloading bytes it already has.
+  rpc GetContent(GetContentRequest) returns (stream GetContentResponse);
 }
 
 message UploadRequest {
@@ -32,7 +39,40 @@ message GetUrlRequest {
 
 message GetUrlResponse {
   // Slack's `url_private`. Requires Authorization: Bearer <bot_token> on
-  // fetch — clients must proxy through spectrum-slack if they want to consume
-  // the bytes (a future GetContent RPC).
+  // fetch — clients that want bytes should use `GetContent` instead. This
+  // RPC remains useful for callers that want to embed a Slack-hosted link
+  // in their own UI (with the auth-header constraint documented).
   string url = 1;
+}
+
+message GetContentRequest {
+  string file_id = 1;
+  // Resume from this byte offset. Default 0 = stream from the start. When
+  // > 0, the server passes `Range: bytes=<offset>-` to Slack's CDN and
+  // expects HTTP 206. Out-of-range or negative values fail with
+  // INVALID_ARGUMENT before any CDN call.
+  optional int64 offset = 2;
+}
+
+message GetContentHeader {
+  string mimetype = 1;
+  string name = 2;
+  // Full file size in bytes (NOT the number of bytes about to be streamed
+  // — that's `size - offset`). SDKs comparing this across resume calls can
+  // detect a server-side file replacement.
+  int64 size = 3;
+  // First byte index in the chunk stream (echoes the request offset). 0
+  // unless resuming.
+  int64 offset = 4;
+}
+
+message GetContentResponse {
+  oneof payload {
+    // Sent exactly once, before any chunks.
+    GetContentHeader header = 1;
+    // Sent zero or more times after the header. Each chunk is at most
+    // `FILE_STREAM_MAX_CHUNK_BYTES` (default 256 KiB) — the server passes
+    // through the network's natural chunks unless they exceed this bound.
+    bytes chunk = 2;
+  }
 }
